@@ -14,7 +14,7 @@ from mypy.errors import CompileError
 from mypy.stubgen import (
     generate_stub, generate_stub_for_module, parse_options, walk_packages, Options
 )
-from mypy.stubgenc import generate_c_type_stub, infer_method_sig
+from mypy.stubgenc import generate_c_type_stub, infer_method_sig, generate_c_function_stub
 from mypy.stubutil import (
     parse_signature, parse_all_signatures, build_signature, find_unique_signatures,
     infer_sig_from_docstring, infer_prop_type_from_docstring
@@ -291,3 +291,30 @@ class StubgencSuite(Suite):
         generate_c_type_stub(mod, 'C', TestClass, output, imports)
         assert_equal(output, ['class C(argparse.Action): ...', ])
         assert_equal(imports, ['import argparse'])
+
+    def test_generate_c_type_with_overload_pybind11(self) -> None:
+        class TestClass:
+            def __init__(self, arg0: str) -> None:
+                """
+                __init__(*args, **kwargs)
+                Overloaded function.
+
+                1. __init__(self: TestClass, arg0: str) -> None
+
+                2. __init__(self: TestClass, arg0: str, arg1: str) -> None
+                """
+                pass
+        output = []  # type: List[str]
+        imports = []  # type: List[str]
+        mod = ModuleType(TestClass.__module__, '')
+        generate_c_function_stub(mod, '__init__', TestClass.__init__, output, imports,
+                                 self_var='self', class_name='TestClass')
+        assert_equal(output, [
+            '@overload',
+            'def __init__(self, arg0: str) -> None: ...',
+            '@overload',
+            'def __init__(self, arg0: str, arg1: str) -> None: ...',
+        ])
+        assert_equal(set(imports), {
+            'from typing import overload'
+        })
