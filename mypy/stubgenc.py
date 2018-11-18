@@ -111,6 +111,39 @@ def is_c_type(obj: object) -> bool:
     return inspect.isclass(obj) or type(obj) is type(int)
 
 
+def generate_stub_for_sig(module: ModuleType,
+                          name: str,
+                          sig: str,
+                          ret_type: str,
+                          self_arg: str,
+                          self_var: Optional[str],
+                          output: List[str],
+                          imports: List[str]) -> None:
+    # strip away parenthesis
+    sig = sig[1:-1]
+    if sig:
+        if self_var:
+            # remove annotation on self from signature if present
+            groups = sig.split(',', 1)
+            if groups[0] == self_var or groups[0].startswith(self_var + ':'):
+                self_arg = ''
+                sig = '{},{}'.format(self_var, groups[1]) if len(groups) > 1 else self_var
+    else:
+        self_arg = self_arg.replace(', ', '')
+
+    if sig:
+        sig_types = []
+        for arg in (arg.split(':', 1) for arg in sig.split(',')):
+            if len(arg) == 1:
+                sig_types.append(arg[0].strip())
+            else:
+                arg_type = strip_or_import(arg[1].strip(), module, imports)
+                sig_types.append('%s: %s' % (arg[0].strip(), arg_type))
+        sig = ", ".join(sig_types)
+    ret_type = strip_or_import(ret_type, module, imports)
+    output.append('def %s(%s%s) -> %s: ...' % (name, self_arg, sig, ret_type))
+
+
 def generate_c_function_stub(module: ModuleType,
                              name: str,
                              obj: object,
@@ -127,31 +160,6 @@ def generate_c_function_stub(module: ModuleType,
     else:
         self_arg = ''
 
-    def generate_stub_for_sig(sig: str, ret_type: str, self_arg: str) -> None:
-        # strip away parenthesis
-        sig = sig[1:-1]
-        if sig:
-            if self_var:
-                # remove annotation on self from signature if present
-                groups = sig.split(',', 1)
-                if groups[0] == self_var or groups[0].startswith(self_var + ':'):
-                    self_arg = ''
-                    sig = '{},{}'.format(self_var, groups[1]) if len(groups) > 1 else self_var
-        else:
-            self_arg = self_arg.replace(', ', '')
-
-        if sig:
-            sig_types = []
-            for arg in (arg.split(':', 1) for arg in sig.split(',')):
-                if len(arg) == 1:
-                    sig_types.append(arg[0].strip())
-                else:
-                    arg_type = strip_or_import(arg[1].strip(), module, imports)
-                    sig_types.append('%s: %s' % (arg[0].strip(), arg_type))
-            sig = ", ".join(sig_types)
-        ret_type = strip_or_import(ret_type, module, imports)
-        output.append('def %s(%s%s) -> %s: ...' % (name, self_arg, sig, ret_type))
-
     stub_done = False
     if (name in ('__new__', '__init__') and name not in sigs and class_name and
             class_name in class_sigs):
@@ -164,7 +172,6 @@ def generate_c_function_stub(module: ModuleType,
         else:
             if class_name and name not in sigs:
                 if 'Overloaded function.' in docstr:
-
                     for overload_docs in docstr.split('\n\n')[1:]:
                         overload_docs = overload_docs[overload_docs.find(name):]
                         inferred = infer_sig_from_docstring(overload_docs, name)
@@ -172,13 +179,14 @@ def generate_c_function_stub(module: ModuleType,
                             overload_sig, ret_type = inferred
                             output.append('@overload')
                             imports.append('from typing import overload')
-                            generate_stub_for_sig(overload_sig, ret_type, self_arg)
+                            generate_stub_for_sig(module, name, overload_sig, ret_type, self_arg,
+                                                  self_var, output, imports)
                             stub_done = True
                 sig = infer_method_sig(name)
             else:
                 sig = sigs.get(name, '(*args, **kwargs)')
     if not stub_done:
-        generate_stub_for_sig(sig, ret_type, self_arg)
+        generate_stub_for_sig(module, name, sig, ret_type, self_arg, self_var, output, imports)
 
 
 def strip_or_import(type_: str, module: ModuleType, imports: List[str]) -> str:
